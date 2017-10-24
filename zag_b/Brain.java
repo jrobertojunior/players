@@ -19,18 +19,25 @@ class Brain extends Thread implements SensorInput {
 	ObjectInfo object;
 	ObjectInfo ball;
 	ObjectInfo flag;
+	ObjectInfo teammate;
 
 	// states
-	int estado = 1;
+	int state = 1;
 	int flag_state = 0;
 
 	// others
-	Point position = new Point(-30, 14);
+	Point initial_position = new Point(-30, 14);
+	Point absolute_position = new Point(0, 0);
 	String flag1, flag2;
-	int limit = 15;
 	boolean bola_perto = false;
 	double angle = 0;
-	double kick_force = 3;
+	String opposite_team;
+
+	// constants
+	public static final double KICK_FORCE = 3;
+	public static final double TURN_ANGLE = 44;
+	public static final double LOW_SPEED = 5;
+	public static final double BALL_DISTANCE = 0.7;
 
     public Brain(SendCommand agent, 
 		 String team, 
@@ -41,6 +48,10 @@ class Brain extends Thread implements SensorInput {
 		m_agent = agent;
 		m_memory = new Memory();
 		m_team = team;
+
+		if (m_team == "yellow")
+			opposite_team = new String("blue");
+		
 		m_side = side;
 		// m_number = number;
 		m_playMode = playMode;
@@ -68,131 +79,136 @@ class Brain extends Thread implements SensorInput {
 				moveToMySide();
 
 			ball = m_memory.getObject("ball");
+			teammate = m_memory.getObject("player " + m_team);
 
-			switch (estado) {
+			switch (state) {
 			case 0:
-				if (ballIsClose()) {
-					estado = 1;
-					bola_perto = true;
+				if (!needToLook(ball)) {
+					// agente esta direcionado para a bola
+					if (!teammateIsCloser(teammate)) {
+						// va ate ela pois nao tem amigo mais perto
+						if (ballIsClose()) {
+							// pass(teammate);
+							System.out.println("toca");
+						} else {
+							run(ball);
+						}
+						// state = 1;
+					} else {
+						// bola esta distante
+						// segue oponente
+						// ou anda devagar em direcao a bola
+						moveWithoutLeavingArea(ball);
+					}
 				}
-
-				locate();
 
 			break;
 			case 1:
-				object = m_memory.getObject("player " + m_team);
-
+/*		
 				if (ball == null) {
 					// If you don't know where the ball is, then find it
-					m_agent.turn(44);
-					angle = angle + 44;
+					m_agent.turn(TURN_ANGLE);
+					angle = angle + TURN_ANGLE;
 
 				} else if (ballIsClose()) {
 					// System.out.println("bola perto: " + ball.m_distance);
 				
-					if (ball.m_distance > 5.0 && (object != null && object.m_distance < ball.m_distance)) {
+					if (ball.m_distance > 5.0 && (teammate != null && teammate.m_distance < ball.m_distance)) {
 						m_agent.turn(ball.m_direction);
-						// angle = angle + 44;
+						// angle = angle + TURN_ANGLE;
 						
 					} else if (ball.m_distance > 0.7) {
 						// If ball is too far then
 						// turn to ball or 
 						// if we have correct direction then go to ball
-						if (ball.m_direction < -2.5 || ball.m_direction > 2.5) {
+						if (!objectIsAligned(ball)) {
 							m_agent.turn(ball.m_direction);
 							angle = angle + ball.m_direction;
 						}
 						else { // otherwise run toward the ball
-							calculatedDash(ball);
+							run(ball);
 						}
 						
 					} else {
-						if (object == null) {
-							m_agent.turn(44);
+						if (teammate == null) {
+							m_agent.turn(TURN_ANGLE);
 							m_memory.clearInfo(); //it was waitForNewInfo(), but I don't think it needs to explicitly wait --Edgar
 						} else {
-							m_agent.kick(kick_force*object.m_distance, object.m_direction);
-							estado = 0;
+							m_agent.kick(KICK_FORCE*teammate.m_distance, teammate.m_direction);
+							state = 0;
 						}
 					}
 				} else if (bola_perto == true) {
-					estado = 0;
+					state = 0;
 					bola_perto = false;
 				}
+*/				state = 0;
 			break;
 			}
+
 			// sleep one step to ensure that we will not send
 			// two commands in one cycle.
 			try {
 				Thread.sleep(2*SoccerParams.simulator_step);
 			} catch(Exception e) {}
-			m_waiting=true;
-			}
+			m_waiting = true;
+		}
 		m_agent.bye();
     }
 
-    // Here are suporting functions for implement logic
-	public void calculatedDash(ObjectInfo parameter) {
-		float power=dash_factor*parameter.m_distance;
-		dash_factor*=0.9; //this decreases the dash factor, it is restored when we get new visual info
+
+	public void run(ObjectInfo object) {
+		float power = dash_factor * object.m_distance;
+		dash_factor *= 0.9; //this decreases the dash factor, it is restored when we get new visual info
 		if (power > 100)
-			power=100;
+			power = 100;
 		m_agent.dash(power);
 	}
 
+	public boolean needToLook(ObjectInfo object) {
+		// toda vez que o agente faz algum movimento a procura da bola,
+		// retorna true (precisou procurar objeto)
+		if (object == null) {
+			m_agent.turn(TURN_ANGLE);
+			return true;
+
+		} else if (!objectIsAligned(object)) {
+			m_agent.turn(object.m_direction);
+			return true;
+		}
+
+		return false;
+	}
+
 	public boolean ballIsClose() {
-		if (ball != null && ball.m_distance < limit)
+		if (ball != null && ball.m_distance < BALL_DISTANCE)
 			return true;
 
 		return false;
 	}
-	
-	public void locate() {
-		if (flag_state == 0) {
-			// primeira flag
-			flag = m_memory.getObject(flag1);
 
-			if (flag == null) {
-				m_agent.turn(44);
-				angle = angle + 44;
-			
-			} else if (flag.m_distance > 2) {
-				if (flag.m_direction < -2.5 || flag.m_direction > 2.5) {
-					m_agent.turn(flag.m_direction);
-				} else {
-					calculatedDash(flag);
-				}
-			} else {
-				flag_state = 1;
-			}
+	public boolean objectIsAligned(ObjectInfo object) {
+		if (object.m_direction < -2.5 || object.m_direction > 2.5)
+			return false;
 
-		} else {
-			// System.out.println("flag_state = 1");
-			// segunda flag
-			flag = m_memory.getObject(flag2);
-			
-			if (flag == null) {
-				m_agent.turn(-44);
-				angle = angle - 44;
-			
-			} else if (flag.m_distance > 55) {
-				if (flag.m_direction < -2.5 || flag.m_direction > 2.5) {
-					m_agent.turn(flag.m_direction);
-					angle = angle + flag.m_direction;
-				} else {
-					calculatedDash(flag);
-				}
-			}else{
-				flag_state = 0;
-				estado = 1;
-				angle = 0;
-			}
-		}
+		return true;
 	}
+
+	public void moveWithoutLeavingArea(ObjectInfo object) {
+		m_agent.dash(object.m_distance * LOW_SPEED);
+	}
+
+	public boolean teammateIsCloser(ObjectInfo teammate) {
+		if (teammate != null && teammate.m_distance < ball.m_distance)
+			return true;
+
+		return false;
+	}
+
 
     public void see(VisualInfo info) {
 		m_memory.store(info);
-		dash_factor=20;
+		dash_factor = 20;
     }
 
     // This function receives hear information from player
@@ -215,7 +231,7 @@ class Brain extends Thread implements SensorInput {
     }
 
     public void moveToMySide() {
-	    m_agent.move(position.x, position.y);
+	    m_agent.move(initial_position.x, initial_position.y);
 	    m_playMode="!"+m_playMode;
 
 		if (m_side == 'l')
